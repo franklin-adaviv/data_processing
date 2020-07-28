@@ -7,6 +7,10 @@ import open3d as o3d
 from cv_bridge import CvBridge
 import time 
 from scipy import signal as sp
+import scipy
+import copy
+from clustering_algorithm_lib import *
+from sklearn.cluster import KMeans
 
 
 def execute_global_registration(source_pcd, target_pcd, voxel_size,distance_threshold = None):
@@ -100,25 +104,26 @@ def show_rosbag(file):
                 
                 # convert msg into image
                 cv_image = bridge.imgmsg_to_cv2(msg,desired_encoding="passthrough")
-                cv_image = cv_image.astype(np.uint8)
+                cv_image = cv_image.astype(np.uint16)
+                print(cv_image[300:310, 300:302])
                 if RGBD_pair[1] is None:
                     RGBD_pair[1] = cv_image
 
-                ## visualize image ###
-                # cv2.namedWindow('RealSense', cv2.WINDOW_AUTOSIZE)
-                # cv2.imshow('RealSense', cv_image)
-                # cv2.waitKey(1)
+                # visualize image ###
+                cv2.namedWindow('RealSense', cv2.WINDOW_AUTOSIZE)
+                cv2.imshow('RealSense', cv_image)
+                cv2.waitKey(1)
 
             elif topic == color_topic:
 
                 # convert msg into image
                 cv_image = bridge.imgmsg_to_cv2(msg,desired_encoding="passthrough")
-                cv_image = cv_image.astype(np.uint8)
+                cv_image = cv_image.astype(np.uint16)
                 
                 if RGBD_pair[0] is None:
                     RGBD_pair[0] = cv_image
                 
-                # ## visualize image ###
+                # visualize image ###
                 # cv2.namedWindow('RealSense', cv2.WINDOW_AUTOSIZE)
                 # cv2.imshow('RealSense', cv_image)
                 # cv2.waitKey(1)
@@ -245,17 +250,30 @@ def show_rosbag(file):
     # plt.title("y")
     # plt.show()
 
-            
+
+
+def display_inlier_outlier(cloud, ind):
+    inlier_cloud = cloud.select_by_index(ind)
+    outlier_cloud = cloud.select_by_index(ind, invert=True)
+
+    print("Showing outliers (red) and inliers (gray): ")
+    outlier_cloud.paint_uniform_color([1, 0, 0])
+    inlier_cloud.paint_uniform_color([0.8, 0.8, 0.8])
+    o3d.visualization.draw_geometries([inlier_cloud, outlier_cloud])
+
+
 def show_ply_file(file):
+    # parameters
+    voxel_size = 15
 
     # get data
     cloud = o3d.io.read_point_cloud(file)
-    cloud = cloud.voxel_down_sample(voxel_size = 25)
+    cloud = cloud.voxel_down_sample(voxel_size = voxel_size)
     cloud.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=100, max_nn=20))
 
     # trasform data into world frame
     z_camera_to_table = 850
-    Beta = 43*2*np.pi/360
+    Beta = 35*2*np.pi/360
     R = o3d.geometry.get_rotation_matrix_from_xyz(np.array([np.pi/2 - Beta,np.pi,np.pi/2]))
     cloud.rotate(R,center = np.array([0,0,0]))
     cloud.translate(np.array([0,0,z_camera_to_table]))
@@ -273,11 +291,119 @@ def show_ply_file(file):
     cloud_table.colors = o3d.utility.Vector3dVector(colors[mask_table])
     cloud_table.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=100, max_nn=20))
     
-    # axes 
+    # calculating the table plane
+    points = np.asarray(cloud_table.points)
+    A = np.ones(np.shape(points)); A[:,:2] = points[:,:2]
+    B = points[:,2:]
+    fit, residual, rnk , s = scipy.linalg.lstsq(A,B)
+
+    # creating a table points mesh point cloud
+    xlim = [0,5000]
+    ylim = [0,5000]
+    step = 100
+    X,Y = np.meshgrid(np.arange(xlim[0], xlim[1], step),
+                  np.arange(ylim[0], ylim[1], step))
+    Z = np.zeros(X.shape)
+    for r in range(X.shape[0]):
+        for c in range(X.shape[1]):
+            Z[r,c] = fit[0] * X[r,c] + fit[1] * Y[r,c] + fit[2]
+    X = X.flatten()
+    Y = Y.flatten()
+    Z = Z.flatten()
+    plane_xyz = np.stack((X,Y,Z)).transpose()
+    cloud_plane = o3d.geometry.PointCloud()
+    cloud_plane.points = o3d.utility.Vector3dVector(plane_xyz)
+    cloud_plane.paint_uniform_color([1,0,0.7])
+
+    # calculating rotation correction
+    plane_normal = -np.array([fit[0,0],fit[1,0],-1])
+    theta_y = np.arctan2(plane_normal[0],plane_normal[2])
+    theta_x = np.arctan2(plane_normal[1],plane_normal[2])
+    cloud_plane_points = np.asarray(cloud_plane.points)
+    rotation_correction_matrix = o3d.geometry.get_rotation_matrix_from_xyz(np.array([theta_x,-theta_y,0]))
+    cloud_plane.rotate(rotation_correction_matrix,center = np.array([0,0,0]))
+
+    # calculatin translation correction vector
+    z_correction = np.mean(cloud_plane_points[:,2])
+    translation_correction_vector = np.array([0,0,-z_correction])
+    cloud_plane.translate(translation_correction_vector)
+
+    # rotate and translate for correction.
+    cloud.rotate(rotation_correction_matrix,center = np.array([0,0,0]))
+    cloud.translate(translation_correction_vector)
+    
+    # create mask for pots
+    pot_height = 375; pot_threshold = 200
+    pot_points = np.asarray(cloud.points)
+    pot_colors = np.asarray(cloud.colors)
+    pot_mask = np.where( (pot_points[:,2] > pot_height - pot_threshold)&(pot_points[:,2] < pot_height + pot_threshold) )
+    pot_points = pot_points[pot_mask]
+    pot_colors = pot_colors[pot_mask]
+    cloud_pot = o3d.geometry.PointCloud()
+    cloud_pot.points = o3d.utility.Vector3dVector(pot_points)
+    cloud_pot.colors = o3d.utility.Vector3dVector(pot_colors)
+
+    # create occupany grid for pots
+    pots_xy = pot_points[:,:2]
+    pots_xy_min = np.min(pots_xy, axis = 0)
+    pots_xy_max = np.max(pots_xy, axis = 0)
+    pots_xy_dim = np.ceil((pots_xy_max - pots_xy_min)/voxel_size).astype(int)
+    pots_map_grid = np.zeros(pots_xy_dim)
+    pots_map_points = ((pots_xy - pots_xy_min)/voxel_size).astype(int)
+    pots_map_grid[pots_map_points[:,0], pots_map_points[:,1]] = 1
+
+    # use clustering to segment the occupancy grid
+    cl = Cluster_Labeling(pots_map_grid)
+    print(cl.assignments.keys())    
+    pot_edge_len = 20 # cm
+    pot_area = pot_edge_len**2
+    print(pot_area)
+    large_clusters = [tup for tup in cl.sorted_clusters if (tup[1] > pot_area*.75)]
+    print(cl.sorted_clusters)
+    print(large_clusters)
+    # process large clusters and segment them so that its N pots rather than 1 large pot
+    new_labels = np.zeros(np.shape(cl.labels))
+    for cluster_id, cluster_size in large_clusters:
+        print(cluster_id,cluster_size)
+        if cluster_size > pot_area*1.5:
+            # kmeans to segment
+            num_pots = np.ceil(cluster_size/pot_area)
+            cluster_points = np.array([[tup[0],tup[1]] for tup in cl.assignments[cluster_id]]).transpose()
+            model = KMeans(n_clusters = num_pots, random_state = 0 ).fit(cluster_points)
+            labels = model.labels_
+            cluster_centers = model.cluster_centers_
+            inertia = model.intertia_
+
+            # create new cluster ids for each pot
+            for new_ix in range(num_pots):
+                print(new_ix)
+
+        else:
+            cluster_points = np.array([[tup[0],tup[1]] for tup in cl.assignments[cluster_id]])
+            new_labels[cluster_points[:,0],cluster_points[:,1]] = cluster_id
+
+
+
+    plt.figure()
+    plt.subplot(221)
+    plt.scatter(pots_xy[:,0],pots_xy[:,1])
+    plt.subplot(222)
+    plt.imshow(pots_map_grid)
+    plt.subplot(223)
+    plt.imshow(cl.labels)
+    plt.show()
+
+    # outlier removal
+    cloud_pot = copy.deepcopy(cloud_pot)
+    cl, ind = cloud_pot.remove_statistical_outlier(nb_neighbors=20,std_ratio=1.0)
+    # display_inlier_outlier(cloud_pot, ind)
+    cloud_pot = cloud_pot.select_by_index(ind)
+
+    # # axes 
     axes = o3d.geometry.TriangleMesh.create_coordinate_frame(size = 1000, origin = np.array([0,0,0]))
 
     # create visualization
-    o3d.visualization.draw_geometries([cloud_table, axes], point_show_normal = True) 
+    o3d.visualization.draw_geometries([cloud_pot, cloud_plane, axes], point_show_normal = False) 
 
 
 
@@ -287,6 +413,8 @@ if __name__ == "__main__":
     f1 = "data/4_pots_optimized.ply"
     show_ply_file(f1)
     ### Bag Files ###
+
     b1 = "data/20200724_134822.bag"
-    #show_rosbag(b1)  
+    b2 = "data/20200724_135552.bag"
+    # show_rosbag(b2)
 
