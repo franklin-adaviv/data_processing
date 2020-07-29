@@ -327,27 +327,29 @@ def ply_analyze_canopy(file):
     max_values = np.max(points, axis = 0)
 
     # choose x to start at 0
-    points = ((points - np.array([min_values[0],0,0]))/voxel_size).astype(int)
-
-    # create occupany grid for pots
-    # pots_xy = pot_points[:,:2]
-    # pots_xy_min = np.min(pots_xy, axis = 0)
-    # pots_xy_max = np.max(pots_xy, axis = 0)
-    # pots_xy_dim = np.ceil((pots_xy_max - pots_xy_min)/voxel_size).astype(int)
-
-    points_map_dim = np.ceil((max_values - min_values)/voxel_size)
+    points = ((points - np.array([min_values[0],min_values[1],0]))/voxel_size).astype(int)
+    points_map_dim = np.ceil((max_values - min_values)/voxel_size).astype(int)
     points_map_grid = np.zeros(points_map_dim)
-    points_map_points = ((points_xy - points_xy_min)/voxel_size).astype(int)
-    density_arr = []
-    for x in range(np.max(points_map_points[:,0])):
-        row_arr = []
-        for y in range(len(points_map_points[:,1])):
-            row_arr.append([])
-    for i in range(len())
 
-        points_map_grid[points_map_points[ix,0], points_map_points[ix,1]] = points_map_points
-    # create a 2d array with values being average height
-    for 
+    # create density array. 2d array with valeus being the avg z of the x,y position
+    density_arr = []
+    for x in range(points_map_dim[0]):
+        row_arr = []
+        for y in range(points_map_dim[1]):
+            row_arr.append([])
+        density_arr.append(row_arr)
+    for i in range(len(points[:,0])):
+        x = points[i,0]
+        y = points[i,1]
+        z = points[i,2]
+        density_arr[x][y].append(z)
+    for x in range(points_map_dim[0]):
+        for y in range(points_map_dim[1]):
+            if len(density_arr[x][y]) == 0:
+                density_arr[x][y] = 0
+            else:
+                density_arr[x][y] = np.mean(density_arr[x][y])
+    density_arr = np.array(density_arr)
     
     # Create a 1d array with values being avg z. We do this by first getting creating lists of all z values, then computing the avg
     arr = []
@@ -366,15 +368,16 @@ def ply_analyze_canopy(file):
     arr = np.array(arr)
 
     plt.figure()
-    plt.subplot(311)
+    plt.subplot(121)
     plt.ylabel("y")
     plt.xlabel("x")
-    plt.scatter(points[:,0],points[:,1])
-    plt.subplot(312)
+    plt.imshow(np.flip(density_arr.transpose()))
+    plt.colorbar()
+    plt.subplot(222)
     plt.stem(arr,use_line_collection = True)
     plt.ylabel("the avg z value of points")
     plt.xlabel("x value")
-    plt.subplot(313)
+    plt.subplot(224)
     plt.xlabel("k values")
     plt.ylabel("FFT coeff")
     FFT = np.fft.fft(arr)
@@ -539,8 +542,8 @@ if __name__ == "__main__":
     f1 = "data/4_pots_optimized.ply"
     f2 = "data/sample_GR(optimized).ply"
     f3 = "data/full(B2R).ply"
-    show_ply_file(f1)
-    #ply_analyze_canopy(f2)
+    #show_ply_file(f1)
+    ply_analyze_canopy(f2)
     ### Bag Files ###
 
     b1 = "data/20200724_134822.bag"
