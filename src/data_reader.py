@@ -321,13 +321,35 @@ def ply_analyze_canopy(file):
     cloud.rotate(rotation_correction_matrix,center = np.array([0,0,0]))
     cloud.translate(translation_correction_vector)
 
-    # make 1d
+    # get min and max
     points = cloud.points 
     min_values = np.min(points, axis = 0)
     max_values = np.max(points, axis = 0)
 
+    # choose x to start at 0
     points = ((points - np.array([min_values[0],0,0]))/voxel_size).astype(int)
 
+    # create occupany grid for pots
+    # pots_xy = pot_points[:,:2]
+    # pots_xy_min = np.min(pots_xy, axis = 0)
+    # pots_xy_max = np.max(pots_xy, axis = 0)
+    # pots_xy_dim = np.ceil((pots_xy_max - pots_xy_min)/voxel_size).astype(int)
+
+    points_map_dim = np.ceil((max_values - min_values)/voxel_size)
+    points_map_grid = np.zeros(points_map_dim)
+    points_map_points = ((points_xy - points_xy_min)/voxel_size).astype(int)
+    density_arr = []
+    for x in range(np.max(points_map_points[:,0])):
+        row_arr = []
+        for y in range(len(points_map_points[:,1])):
+            row_arr.append([])
+    for i in range(len())
+
+        points_map_grid[points_map_points[ix,0], points_map_points[ix,1]] = points_map_points
+    # create a 2d array with values being average height
+    for 
+    
+    # Create a 1d array with values being avg z. We do this by first getting creating lists of all z values, then computing the avg
     arr = []
     for ix in range(np.max(points[:,0])+1):
         arr.append([])
@@ -336,7 +358,12 @@ def ply_analyze_canopy(file):
         z_coord = points[ix,2]
         arr[x_coord].append(z_coord)
     for ix in range(len(arr)):
-        arr[ix] = np.mean(arr[ix])
+        if len(arr[ix]) == 0:
+            arr[ix] = 0
+            print("this shouldn't happen")
+        else: 
+            arr[ix] = np.mean(arr[ix])
+    arr = np.array(arr)
 
     plt.figure()
     plt.subplot(311)
@@ -485,11 +512,11 @@ def show_ply_file(file):
     plt.subplot(221)
     plt.scatter(pots_xy[:,0],pots_xy[:,1])
     plt.subplot(222)
-    plt.imshow(pots_map_grid)
+    plt.imshow(np.flip(pots_map_grid.transpose(),axis = 0))
     plt.subplot(223)
-    plt.imshow(cl.labels)
+    plt.imshow(np.flip(cl.labels.transpose(),axis = 0))
     plt.subplot(224)
-    plt.imshow(new_labels)
+    plt.imshow(np.flip(new_labels.transpose(),axis = 0))
     plt.show()
 
     # outlier removal
@@ -502,7 +529,7 @@ def show_ply_file(file):
     axes = o3d.geometry.TriangleMesh.create_coordinate_frame(size = 1000, origin = np.array([0,0,0]))
 
     # create visualization
-    o3d.visualization.draw_geometries([cloud_pot, cloud_plane, axes], point_show_normal = False) 
+    o3d.visualization.draw_geometries([cloud, cloud_plane, axes], point_show_normal = False) 
 
 
 
@@ -512,8 +539,8 @@ if __name__ == "__main__":
     f1 = "data/4_pots_optimized.ply"
     f2 = "data/sample_GR(optimized).ply"
     f3 = "data/full(B2R).ply"
-    #show_ply_file(f2)
-    ply_analyze_canopy(f2)
+    show_ply_file(f1)
+    #ply_analyze_canopy(f2)
     ### Bag Files ###
 
     b1 = "data/20200724_134822.bag"
