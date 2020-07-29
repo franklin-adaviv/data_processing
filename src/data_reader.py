@@ -261,6 +261,106 @@ def display_inlier_outlier(cloud, ind):
     inlier_cloud.paint_uniform_color([0.8, 0.8, 0.8])
     o3d.visualization.draw_geometries([inlier_cloud, outlier_cloud])
 
+def ply_analyze_canopy(file):
+    # parameters
+    voxel_size = 15
+
+    # get data
+    cloud = o3d.io.read_point_cloud(file)
+    cloud = cloud.voxel_down_sample(voxel_size = voxel_size)
+
+    # trasform data into world frame
+    z_camera_to_table = 700
+    Beta = 43*2*np.pi/360
+
+    R = o3d.geometry.get_rotation_matrix_from_xyz(np.array([-Beta,np.pi,np.pi/2]))    # for the pots file
+
+    #R = o3d.geometry.get_rotation_matrix_from_xyz(np.array([0,np.pi/2,np.pi/2]))     # for the long bench file
+    cloud.rotate(R,center = np.array([0,0,0]))
+    cloud.translate(np.array([0,0,z_camera_to_table]))
+
+    # make plane points
+    points = np.asarray(cloud.points)
+    points[:,1] = -points[:,1]
+    A = np.ones(np.shape(points)); A[:,:2] = points[:,:2]
+    B = points[:,2:]
+    fit, residual, rnk , s = scipy.linalg.lstsq(A,B)
+    # create plane mesh
+    xlim = [0,5000]
+    ylim = [0,5000]
+    step = 100
+    X,Y = np.meshgrid(np.arange(xlim[0], xlim[1], step),
+                  np.arange(ylim[0], ylim[1], step))
+    Z = np.zeros(X.shape)
+    for r in range(X.shape[0]):
+        for c in range(X.shape[1]):
+            Z[r,c] = fit[0] * X[r,c] + fit[1] * Y[r,c] + fit[2]
+    X = X.flatten()
+    Y = Y.flatten()
+    Z = Z.flatten()
+
+    plane_xyz = np.stack((X,Y,Z)).transpose()
+    cloud_plane = o3d.geometry.PointCloud()
+    cloud_plane.points = o3d.utility.Vector3dVector(plane_xyz)
+    cloud_plane.paint_uniform_color([1,0,0.7])
+
+    # calculating rotation correction
+    plane_normal = -np.array([fit[0,0],fit[1,0],-1])
+    theta_y = np.arctan2(plane_normal[0],plane_normal[2])
+    theta_x = np.arctan2(plane_normal[1],plane_normal[2])
+    cloud_plane_points = np.asarray(cloud_plane.points)
+    rotation_correction_matrix = o3d.geometry.get_rotation_matrix_from_xyz(np.array([theta_x,-theta_y,0]))
+    cloud_plane.rotate(rotation_correction_matrix,center = np.array([0,0,0]))
+
+    # calculatin translation correction vector
+    z_correction = np.mean(cloud_plane_points[:,2])
+    translation_correction_vector = np.array([0,0,-z_correction])
+    cloud_plane.translate(translation_correction_vector)
+
+    # rotate and translate for correction.
+    cloud.rotate(rotation_correction_matrix,center = np.array([0,0,0]))
+    cloud.translate(translation_correction_vector)
+
+    # make 1d
+    points = cloud.points 
+    min_values = np.min(points, axis = 0)
+    max_values = np.max(points, axis = 0)
+
+    points = ((points - np.array([min_values[0],0,0]))/voxel_size).astype(int)
+
+    arr = []
+    for ix in range(np.max(points[:,0])+1):
+        arr.append([])
+    for ix in range(len(points[:,0])):
+        x_coord = points[ix,0]
+        z_coord = points[ix,2]
+        arr[x_coord].append(z_coord)
+    for ix in range(len(arr)):
+        arr[ix] = np.mean(arr[ix])
+
+    plt.figure()
+    plt.subplot(311)
+    plt.ylabel("y")
+    plt.xlabel("x")
+    plt.scatter(points[:,0],points[:,1])
+    plt.subplot(312)
+    plt.stem(arr,use_line_collection = True)
+    plt.ylabel("the avg z value of points")
+    plt.xlabel("x value")
+    plt.subplot(313)
+    plt.xlabel("k values")
+    plt.ylabel("FFT coeff")
+    FFT = np.fft.fft(arr)
+    plt.stem(np.abs(FFT),use_line_collection = True)
+    plt.show()
+
+    # # axes 
+    axes = o3d.geometry.TriangleMesh.create_coordinate_frame(size = 1000, origin = np.array([0,0,0]))
+
+    # create visualization
+    o3d.visualization.draw_geometries([cloud, cloud_plane, axes], point_show_normal = False) 
+
+
 
 def show_ply_file(file):
     # parameters
@@ -353,30 +453,27 @@ def show_ply_file(file):
     pots_map_grid[pots_map_points[:,0], pots_map_points[:,1]] = 1
 
     # use clustering to segment the occupancy grid
-    cl = Cluster_Labeling(pots_map_grid)
-    print(cl.assignments.keys())    
+    cl = Cluster_Labeling(pots_map_grid)  
     pot_edge_len = 20 # cm
     pot_area = pot_edge_len**2
-    print(pot_area)
     large_clusters = [tup for tup in cl.sorted_clusters if (tup[1] > pot_area*.75)]
-    print(cl.sorted_clusters)
-    print(large_clusters)
+
     # process large clusters and segment them so that its N pots rather than 1 large pot
     new_labels = np.zeros(np.shape(cl.labels))
     for cluster_id, cluster_size in large_clusters:
-        print(cluster_id,cluster_size)
         if cluster_size > pot_area*1.5:
             # kmeans to segment
-            num_pots = np.ceil(cluster_size/pot_area)
-            cluster_points = np.array([[tup[0],tup[1]] for tup in cl.assignments[cluster_id]]).transpose()
+            num_pots = int(cluster_size/pot_area)
+            cluster_points = np.array([[tup[0],tup[1]] for tup in cl.assignments[cluster_id]])
             model = KMeans(n_clusters = num_pots, random_state = 0 ).fit(cluster_points)
-            labels = model.labels_
+            labels = model.labels_; labels += 1
             cluster_centers = model.cluster_centers_
-            inertia = model.intertia_
+            inertia = model.inertia_
 
             # create new cluster ids for each pot
             for new_ix in range(num_pots):
-                print(new_ix)
+                new_labels[cluster_points[:,0],cluster_points[:,1]] = cluster_id + .5**labels 
+
 
         else:
             cluster_points = np.array([[tup[0],tup[1]] for tup in cl.assignments[cluster_id]])
@@ -391,6 +488,8 @@ def show_ply_file(file):
     plt.imshow(pots_map_grid)
     plt.subplot(223)
     plt.imshow(cl.labels)
+    plt.subplot(224)
+    plt.imshow(new_labels)
     plt.show()
 
     # outlier removal
@@ -411,7 +510,10 @@ if __name__ == "__main__":
 
     ### PLY files ###
     f1 = "data/4_pots_optimized.ply"
-    show_ply_file(f1)
+    f2 = "data/sample_GR(optimized).ply"
+    f3 = "data/full(B2R).ply"
+    #show_ply_file(f2)
+    ply_analyze_canopy(f2)
     ### Bag Files ###
 
     b1 = "data/20200724_134822.bag"
