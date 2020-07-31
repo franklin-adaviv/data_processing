@@ -340,7 +340,7 @@ def ply_analyze_canopy(file):
     points_map_dim = np.ceil((max_values - min_values)/voxel_size).astype(int)
     points_map_grid = np.zeros(points_map_dim)
 
-    # create density array. 2d array with valeus being the avg z of the x,y position
+    # create density array. 2d array with values being the avg z of the x,y position
     density_arr = []
     for x in range(points_map_dim[0]):
         row_arr = []
@@ -398,8 +398,81 @@ def ply_analyze_canopy(file):
 
     # create visualization
     o3d.visualization.draw_geometries([cloud, cloud_plane, axes], point_show_normal = False) 
+def rotate_2d(origin, point, angle):
+    """
+    Rotate a point counterclockwise by a given angle around a given origin.
+
+    The angle should be given in radians.
+    """
+    ox, oy = origin
+    px, py = point
+
+    qx = ox + np.cos(angle) * (px - ox) - np.sin(angle) * (py - oy)
+    qy = oy + np.sin(angle) * (px - ox) + np.cos(angle) * (py - oy)
+    return qx, qy
+
+def remove_distortion(cloud):
+    # the SLAM algorithm introduces a dsitortion. while the points should fit a line in the xy plane,
+    # the errors in pose estimation cause the points to form a curve in the xy plane.
+    # this function takes in a point cloud and tries to project the best fit spline of the points in xy plane onto a line.
+    # returns a new pointcloud object.
+    
+    # extract point cloud info
+    points = np.asarray(cloud.points) 
+    colors = np.asarray(cloud.colors)
+    x = points[:,0]
+    y = points[:,1]
+
+    # find best fit line
+    m,b = np.polyfit(points[:,0],points[:,1], 1)
+
+    # align points with x axis
+    y = y - b # set b = 0.
+    theta = np.arctan2(m,1)
+    new_x, new_y = rotate_2d((0,0),(x,y),-theta)
+    new_points = np.stack((new_x,new_y)).transpose()
+    print(np.shape(new_points))
+
+    # find best fit curve
+    print("finding curve")
+    sampled = new_points[np.random.randint(new_points.shape[0],size = 100), :]
+    sampled = sampled[np.argsort(sampled[:,0])]
+    sampled_x = sampled[:,0]
+    sampled_y = sampled[:,1]
+    f_curve = np.poly1d(np.polyfit(sampled_x, sampled_y, 3))
+    curve_x = sampled_x
+    curve_y = f_curve(curve_x)
+    print("done")
+
+    # change_y 
+    proj_x = new_x
+    proj_y = new_y - f_curve(new_x)
+    proj_z = points[:,2]
+    proj_points = np.stack((proj_x,proj_y,proj_z)).transpose()
 
 
+
+
+    plt.figure()
+    plt.subplot(221)
+    plt.scatter(x,y)
+    plt.plot(x, m*x+b)
+    plt.subplot(222)
+    plt.scatter(sampled_x,sampled_y)
+    print("plotting curve")
+    plt.plot(curve_x,curve_y)
+    plt.subplot(223)
+    ix = np.random.randint(proj_points.shape[0],size = 100)
+    sampled_proj_x = proj_points[ix,0]
+    sampled_proj_y = proj_points[ix,1]
+    plt.scatter(sampled_proj_x,sampled_proj_y)
+    plt.show()
+
+    proj_cloud = o3d.geometry.PointCloud()
+    axes = o3d.geometry.TriangleMesh.create_coordinate_frame(size = 1000, origin = np.array([0,0,0]))
+    proj_cloud.points = o3d.utility.Vector3dVector(proj_points)
+    proj_cloud.colors = o3d.utility.Vector3dVector(colors)
+    o3d.visualization.draw_geometries([proj_cloud,axes])
 
 def show_ply_file(file):
     # parameters
@@ -408,8 +481,7 @@ def show_ply_file(file):
     # get data
     cloud = o3d.io.read_point_cloud(file)
     cloud = cloud.voxel_down_sample(voxel_size = voxel_size)
-    cloud.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=100, max_nn=20))
-
+    print(cloud.points)
     # trasform data into world frame
     z_camera_to_table = 850
     Beta = 35*2*np.pi/360
@@ -419,7 +491,6 @@ def show_ply_file(file):
 
     # extract data
     points = np.asarray(cloud.points)
-    normals = np.asarray(cloud.normals)
     colors = np.asarray(cloud.colors)
 
     # extract z near 0 points, corresponding to points near table
@@ -428,7 +499,7 @@ def show_ply_file(file):
     cloud_table = o3d.geometry.PointCloud()
     cloud_table.points = o3d.utility.Vector3dVector(points[mask_table])
     cloud_table.colors = o3d.utility.Vector3dVector(colors[mask_table])
-    cloud_table.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=100, max_nn=20))
+    #cloud_table.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=100, max_nn=20))
     
     # calculating the table plane
     points = np.asarray(cloud_table.points)
@@ -470,6 +541,11 @@ def show_ply_file(file):
     # rotate and translate for correction.
     cloud.rotate(rotation_correction_matrix,center = np.array([0,0,0]))
     cloud.translate(translation_correction_vector)
+
+
+    # Do curved distortion removal 
+    remove_distortion(cloud)
+    print("1")
     
     # create mask for pots
     pot_height = 375; pot_threshold = 200
@@ -481,6 +557,7 @@ def show_ply_file(file):
     cloud_pot = o3d.geometry.PointCloud()
     cloud_pot.points = o3d.utility.Vector3dVector(pot_points)
     cloud_pot.colors = o3d.utility.Vector3dVector(pot_colors)
+    print(2)
 
     # create occupany grid for pots
     pots_xy = pot_points[:,:2]
@@ -490,12 +567,14 @@ def show_ply_file(file):
     pots_map_grid = np.zeros(pots_xy_dim)
     pots_map_points = ((pots_xy - pots_xy_min)/voxel_size).astype(int)
     pots_map_grid[pots_map_points[:,0], pots_map_points[:,1]] = 1
-
+    print(3)
     # use clustering to segment the occupancy grid
     cl = Cluster_Labeling(pots_map_grid)  
+    print(3.5)
     pot_edge_len = 20 # cm
     pot_area = pot_edge_len**2
     large_clusters = [tup for tup in cl.sorted_clusters if (tup[1] > pot_area*.75)]
+    print(4)
 
     # process large clusters and segment them so that its N pots rather than 1 large pot
     new_labels = np.zeros(np.shape(cl.labels))
@@ -517,9 +596,9 @@ def show_ply_file(file):
         else:
             cluster_points = np.array([[tup[0],tup[1]] for tup in cl.assignments[cluster_id]])
             new_labels[cluster_points[:,0],cluster_points[:,1]] = cluster_id
+    print(5)
 
-
-
+    plt.close("all")
     plt.figure()
     plt.subplot(221)
     plt.scatter(pots_xy[:,0],pots_xy[:,1])
@@ -529,20 +608,24 @@ def show_ply_file(file):
     plt.imshow(np.flip(cl.labels.transpose(),axis = 0))
     plt.subplot(224)
     plt.imshow(np.flip(new_labels.transpose(),axis = 0))
-    plt.show()
 
+    print("done plotting")
+    plt.show()
+    print(6)
     # outlier removal
     cloud_pot = copy.deepcopy(cloud_pot)
     cl, ind = cloud_pot.remove_statistical_outlier(nb_neighbors=20,std_ratio=1.0)
     # display_inlier_outlier(cloud_pot, ind)
     cloud_pot = cloud_pot.select_by_index(ind)
 
+    print("6.5")
+
     # # axes 
     axes = o3d.geometry.TriangleMesh.create_coordinate_frame(size = 1000, origin = np.array([0,0,0]))
 
     # create visualization
-    o3d.visualization.draw_geometries([cloud, cloud_plane, axes], point_show_normal = False) 
-
+    o3d.visualization.draw_geometries([cloud, cloud_plane, axes], point_show_normal = False)
+    print(7)
 
 
 if __name__ == "__main__":
@@ -550,9 +633,9 @@ if __name__ == "__main__":
     ### PLY files ###
     f1 = "data/4_pots_optimized.ply"
     f2 = "data/sample_GR(optimized).ply"
-    f3 = "data/full(B2R).ply"
-    #show_ply_file(f1)
-    ply_analyze_canopy(f2)
+    f3 = "data/pot_full.ply"
+    show_ply_file(f1)
+    #ply_analyze_canopy(f2)
     ### Bag Files ###
 
     b1 = "data/20200724_134822.bag"
