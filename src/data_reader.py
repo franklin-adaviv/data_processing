@@ -578,7 +578,7 @@ def show_ply_file(file):
         if cluster_size > pot_area*1.5:
             # kmeans to segment
             num_pots = int(cluster_size/pot_area)
-            print(cluster_size, cluster/pot_area, num_pots)
+            print(cluster_size, cluster_size/pot_area, num_pots)
             cluster_points = np.array([[tup[0],tup[1]] for tup in cl.assignments[cluster_id]])
             model = KMeans(n_clusters = num_pots, random_state = 0 ).fit(cluster_points)
             labels = model.labels_; labels += 1
