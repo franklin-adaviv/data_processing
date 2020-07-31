@@ -309,22 +309,22 @@ def ply_analyze_canopy(file):
     Z = Z.flatten()
 
     plane_xyz = np.stack((X,Y,Z)).transpose()
-    cloud_plane = o3d.geometry.PointCloud()
-    cloud_plane.points = o3d.utility.Vector3dVector(plane_xyz)
-    cloud_plane.paint_uniform_color([1,0,0.7])
+    cloud_table_plane = o3d.geometry.PointCloud()
+    cloud_table_plane.points = o3d.utility.Vector3dVector(plane_xyz)
+    cloud_table_plane.paint_uniform_color([1,0,0.7])
 
     # calculating rotation correction
     plane_normal = -np.array([fit[0,0],fit[1,0],-1])
     theta_y = np.arctan2(plane_normal[0],plane_normal[2])
     theta_x = np.arctan2(plane_normal[1],plane_normal[2])
-    cloud_plane_points = np.asarray(cloud_plane.points)
+    cloud_table_plane_points = np.asarray(cloud_table_plane.points)
     rotation_correction_matrix = o3d.geometry.get_rotation_matrix_from_xyz(np.array([theta_x,-theta_y,0]))
-    cloud_plane.rotate(rotation_correction_matrix,center = np.array([0,0,0]))
+    cloud_table_plane.rotate(rotation_correction_matrix,center = np.array([0,0,0]))
 
     # calculatin translation correction vector
-    z_correction = np.mean(cloud_plane_points[:,2])
+    z_correction = np.mean(cloud_table_plane_points[:,2])
     translation_correction_vector = np.array([0,0,-z_correction])
-    cloud_plane.translate(translation_correction_vector)
+    cloud_table_plane.translate(translation_correction_vector)
 
     # rotate and translate for correction.
     cloud.rotate(rotation_correction_matrix,center = np.array([0,0,0]))
@@ -397,7 +397,7 @@ def ply_analyze_canopy(file):
     axes = o3d.geometry.TriangleMesh.create_coordinate_frame(size = 1000, origin = np.array([0,0,0]))
 
     # create visualization
-    o3d.visualization.draw_geometries([cloud, cloud_plane, axes], point_show_normal = False) 
+    o3d.visualization.draw_geometries([cloud, cloud_table_plane, axes], point_show_normal = False) 
 def rotate_2d(origin, point, angle):
     """
     Rotate a point counterclockwise by a given angle around a given origin.
@@ -435,7 +435,7 @@ def remove_distortion(cloud):
 
     # find best fit curve
     print("finding curve")
-    sampled = new_points[np.random.randint(new_points.shape[0],size = 100), :]
+    sampled = new_points[np.random.randint(new_points.shape[0],size = 500), :]
     sampled = sampled[np.argsort(sampled[:,0])]
     sampled_x = sampled[:,0]
     sampled_y = sampled[:,1]
@@ -451,28 +451,27 @@ def remove_distortion(cloud):
     proj_points = np.stack((proj_x,proj_y,proj_z)).transpose()
 
 
-
-
     plt.figure()
     plt.subplot(221)
     plt.scatter(x,y)
     plt.plot(x, m*x+b)
     plt.subplot(222)
     plt.scatter(sampled_x,sampled_y)
-    print("plotting curve")
     plt.plot(curve_x,curve_y)
     plt.subplot(223)
     ix = np.random.randint(proj_points.shape[0],size = 100)
     sampled_proj_x = proj_points[ix,0]
     sampled_proj_y = proj_points[ix,1]
     plt.scatter(sampled_proj_x,sampled_proj_y)
-    plt.show()
+    plt.savefig("output/remove_distort.png")
 
     proj_cloud = o3d.geometry.PointCloud()
     axes = o3d.geometry.TriangleMesh.create_coordinate_frame(size = 1000, origin = np.array([0,0,0]))
     proj_cloud.points = o3d.utility.Vector3dVector(proj_points)
     proj_cloud.colors = o3d.utility.Vector3dVector(colors)
     o3d.visualization.draw_geometries([proj_cloud,axes])
+
+    return proj_cloud
 
 def show_ply_file(file):
     # parameters
@@ -521,22 +520,22 @@ def show_ply_file(file):
     Y = Y.flatten()
     Z = Z.flatten()
     plane_xyz = np.stack((X,Y,Z)).transpose()
-    cloud_plane = o3d.geometry.PointCloud()
-    cloud_plane.points = o3d.utility.Vector3dVector(plane_xyz)
-    cloud_plane.paint_uniform_color([1,0,0.7])
+    cloud_table_plane = o3d.geometry.PointCloud()
+    cloud_table_plane.points = o3d.utility.Vector3dVector(plane_xyz)
+    cloud_table_plane.paint_uniform_color([1,0,0.7])
 
     # calculating rotation correction
     plane_normal = -np.array([fit[0,0],fit[1,0],-1])
     theta_y = np.arctan2(plane_normal[0],plane_normal[2])
     theta_x = np.arctan2(plane_normal[1],plane_normal[2])
-    cloud_plane_points = np.asarray(cloud_plane.points)
+    cloud_table_plane_points = np.asarray(cloud_table_plane.points)
     rotation_correction_matrix = o3d.geometry.get_rotation_matrix_from_xyz(np.array([theta_x,-theta_y,0]))
-    cloud_plane.rotate(rotation_correction_matrix,center = np.array([0,0,0]))
+    cloud_table_plane.rotate(rotation_correction_matrix,center = np.array([0,0,0]))
 
     # calculatin translation correction vector
-    z_correction = np.mean(cloud_plane_points[:,2])
+    z_correction = np.mean(cloud_table_plane_points[:,2])
     translation_correction_vector = np.array([0,0,-z_correction])
-    cloud_plane.translate(translation_correction_vector)
+    cloud_table_plane.translate(translation_correction_vector)
 
     # rotate and translate for correction.
     cloud.rotate(rotation_correction_matrix,center = np.array([0,0,0]))
@@ -544,8 +543,7 @@ def show_ply_file(file):
 
 
     # Do curved distortion removal 
-    remove_distortion(cloud)
-    print("1")
+    cloud = remove_distortion(cloud)
     
     # create mask for pots
     pot_height = 375; pot_threshold = 200
@@ -557,7 +555,6 @@ def show_ply_file(file):
     cloud_pot = o3d.geometry.PointCloud()
     cloud_pot.points = o3d.utility.Vector3dVector(pot_points)
     cloud_pot.colors = o3d.utility.Vector3dVector(pot_colors)
-    print(2)
 
     # create occupany grid for pots
     pots_xy = pot_points[:,:2]
@@ -567,14 +564,13 @@ def show_ply_file(file):
     pots_map_grid = np.zeros(pots_xy_dim)
     pots_map_points = ((pots_xy - pots_xy_min)/voxel_size).astype(int)
     pots_map_grid[pots_map_points[:,0], pots_map_points[:,1]] = 1
-    print(3)
+
     # use clustering to segment the occupancy grid
     cl = Cluster_Labeling(pots_map_grid)  
-    print(3.5)
-    pot_edge_len = 20 # cm
+
+    pot_edge_len = 250/voxel_size 
     pot_area = pot_edge_len**2
     large_clusters = [tup for tup in cl.sorted_clusters if (tup[1] > pot_area*.75)]
-    print(4)
 
     # process large clusters and segment them so that its N pots rather than 1 large pot
     new_labels = np.zeros(np.shape(cl.labels))
@@ -582,6 +578,7 @@ def show_ply_file(file):
         if cluster_size > pot_area*1.5:
             # kmeans to segment
             num_pots = int(cluster_size/pot_area)
+            print(cluster_size, cluster/pot_area, num_pots)
             cluster_points = np.array([[tup[0],tup[1]] for tup in cl.assignments[cluster_id]])
             model = KMeans(n_clusters = num_pots, random_state = 0 ).fit(cluster_points)
             labels = model.labels_; labels += 1
@@ -596,36 +593,28 @@ def show_ply_file(file):
         else:
             cluster_points = np.array([[tup[0],tup[1]] for tup in cl.assignments[cluster_id]])
             new_labels[cluster_points[:,0],cluster_points[:,1]] = cluster_id
-    print(5)
+
 
     plt.close("all")
     plt.figure()
-    plt.subplot(221)
-    plt.scatter(pots_xy[:,0],pots_xy[:,1])
-    plt.subplot(222)
-    plt.imshow(np.flip(pots_map_grid.transpose(),axis = 0))
-    plt.subplot(223)
+    plt.subplot(211)
     plt.imshow(np.flip(cl.labels.transpose(),axis = 0))
-    plt.subplot(224)
+    plt.subplot(212)
     plt.imshow(np.flip(new_labels.transpose(),axis = 0))
+    plt.savefig("output/pots.png")
+    plt.close("all")
 
-    print("done plotting")
-    plt.show()
-    print(6)
     # outlier removal
     cloud_pot = copy.deepcopy(cloud_pot)
     cl, ind = cloud_pot.remove_statistical_outlier(nb_neighbors=20,std_ratio=1.0)
     # display_inlier_outlier(cloud_pot, ind)
     cloud_pot = cloud_pot.select_by_index(ind)
 
-    print("6.5")
-
     # # axes 
     axes = o3d.geometry.TriangleMesh.create_coordinate_frame(size = 1000, origin = np.array([0,0,0]))
 
     # create visualization
-    o3d.visualization.draw_geometries([cloud, cloud_plane, axes], point_show_normal = False)
-    print(7)
+    o3d.visualization.draw_geometries([cloud, cloud_table_plane, axes], point_show_normal = False)
 
 
 if __name__ == "__main__":
@@ -634,7 +623,7 @@ if __name__ == "__main__":
     f1 = "data/4_pots_optimized.ply"
     f2 = "data/sample_GR(optimized).ply"
     f3 = "data/pot_full.ply"
-    show_ply_file(f1)
+    show_ply_file(f3)
     #ply_analyze_canopy(f2)
     ### Bag Files ###
 
