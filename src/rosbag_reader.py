@@ -195,8 +195,8 @@ def pointcloud_from_rgbd(file,timestamps,pose_dict):
                 pos_arr, quat = pose_dict[pose_time]
                 R_matrix = axes.get_rotation_matrix_from_quaternion(quat)
                 cloud.rotate(R_matrix, center = (0,0,0))
-                if trans_offset != None:
-                    cloud.transform(trans_offset)
+                if trans_offset is not None:
+                    #cloud.transform(trans_offset)
                     cloud.translate(pos_arr)
 
                     # add point cloud to all point clouds
@@ -205,11 +205,12 @@ def pointcloud_from_rgbd(file,timestamps,pose_dict):
                 
                 prev_cloud = cloud
 
-            if trans_offset == None and image_frame_count > 2:
+            if trans_offset is None and image_frame_count > 1 + 2*image_step_size:
                 threshold = voxel_size*1.5
                 result_global = execute_global_registration(cloud, prev_cloud, voxel_size)
+                trans_init = result_global.transformation
                 result_local = execute_local_registration(cloud, prev_cloud,trans_init,threshold)
-                trans_offset = result.local.transformation
+                trans_offset = result_local.transformation
                 draw_registration_result(cloud, prev_cloud,trans_offset)
 
 
