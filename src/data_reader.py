@@ -479,6 +479,7 @@ def show_ply_file(file):
 
     # get data
     cloud = o3d.io.read_point_cloud(file)
+    print("finshed reading file")
     cloud = cloud.voxel_down_sample(voxel_size = voxel_size)
     print(cloud.points)
     # trasform data into world frame
@@ -568,7 +569,7 @@ def show_ply_file(file):
     # use clustering to segment the occupancy grid
     cl = Cluster_Labeling(pots_map_grid)  
 
-    pot_edge_len = 250/voxel_size 
+    pot_edge_len = 320/voxel_size 
     pot_area = pot_edge_len**2
     large_clusters = [tup for tup in cl.sorted_clusters if (tup[1] > pot_area*.75)]
 
@@ -580,14 +581,16 @@ def show_ply_file(file):
             num_pots = int(cluster_size/pot_area)
             print(cluster_size, cluster_size/pot_area, num_pots)
             cluster_points = np.array([[tup[0],tup[1]] for tup in cl.assignments[cluster_id]])
+            print("start kmeans")
             model = KMeans(n_clusters = num_pots, random_state = 0 ).fit(cluster_points)
+            print("finished k means")
             labels = model.labels_; labels += 1
             cluster_centers = model.cluster_centers_
             inertia = model.inertia_
 
             # create new cluster ids for each pot
             for new_ix in range(num_pots):
-                new_labels[cluster_points[:,0],cluster_points[:,1]] = cluster_id + .5**labels 
+                new_labels[cluster_points[:,0],cluster_points[:,1]] = labels*cluster_id + .5**(labels) 
 
 
         else:
@@ -607,6 +610,7 @@ def show_ply_file(file):
     # outlier removal
     cloud_pot = copy.deepcopy(cloud_pot)
     cl, ind = cloud_pot.remove_statistical_outlier(nb_neighbors=20,std_ratio=1.0)
+    
     # display_inlier_outlier(cloud_pot, ind)
     cloud_pot = cloud_pot.select_by_index(ind)
 
