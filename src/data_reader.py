@@ -2,14 +2,13 @@ import sys
 import numpy as np 
 import matplotlib.pyplot as plt
 import cv2 
-import rosbag
 import open3d as o3d 
-from cv_bridge import CvBridge
 import time 
 from scipy import signal as sp
 import scipy
 import copy
 from clustering_algorithm_lib import *
+import glob
 from sklearn.cluster import KMeans
 
 
@@ -65,199 +64,9 @@ def get_array(fname):
 def show_arr():
     fname = "depth_image.csv"
     im = get_array(fname)
-    print(np.shape(im))
     plt.imshow(im,vmax = 200)
     plt.show()
 
-def show_rosbag(file):
-    bag = rosbag.Bag(file)
-    bridge = CvBridge()
-
-    # camera state is a vector [ xyz_pos, xyz_vel, xyz_accel, theta_xyz_pos, theta_xyz_vel]
-    dts = np.array([])
-    timestamps = np.array([])
-    camera_states = np.array([[[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0]]],dtype = float)
-    prev_timestamp = 0
-    dt = 0
-
-    # RBGD image pair
-    RGBD_pair = [None,None]
-
-    is_accel_updated = False
-    is_gyro_updated = False
-
-    # show 3d
-    # vis = o3d.visualization.Visualizer()
-    # vis.create_window()
-
-    # point cloud scene
-    image_frame_count = 0
-    images_to_skip = 100
-    all_pcd = []
-
-    for message_data in bag.read_messages():
-        try:
-            (topic,msg,t) = message_data
-
-
-            # topic names
-            depth_topic = "/device_0/sensor_0/Depth_0/image/data" 
-            gyro_topic = "/device_0/sensor_2/Gyro_0/imu/data"
-            color_topic = "/device_0/sensor_1/Color_0/image/data"
-            accel_topic = "/device_0/sensor_2/Accel_0/imu/data"
-
-            # get prev camera state
-            prev_camera_state = camera_states[-1]
-
-            if topic == depth_topic:
-                
-                # convert msg into image
-                cv_image = bridge.imgmsg_to_cv2(msg,desired_encoding="passthrough")
-                cv_image = cv_image.astype(np.uint16)
-                print(cv_image[300:310, 300:302])
-                if RGBD_pair[1] is None:
-                    RGBD_pair[1] = cv_image
-
-                # visualize image ###
-                cv2.namedWindow('RealSense', cv2.WINDOW_AUTOSIZE)
-                cv2.imshow('RealSense', cv_image)
-                cv2.waitKey(1)
-
-            elif topic == color_topic:
-
-                # convert msg into image
-                cv_image = bridge.imgmsg_to_cv2(msg,desired_encoding="passthrough")
-                cv_image = cv_image.astype(np.uint16)
-                
-                if RGBD_pair[0] is None:
-                    RGBD_pair[0] = cv_image
-                
-                # visualize image ###
-                # cv2.namedWindow('RealSense', cv2.WINDOW_AUTOSIZE)
-                # cv2.imshow('RealSense', cv_image)
-                # cv2.waitKey(1)
-
-            elif topic == accel_topic:
-
-                # Header
-                frame_id = msg.header.frame_id
-                secs, nsecs = msg.header.stamp.secs, msg.header.stamp.nsecs
-                timestamp = secs + nsecs/1000000000.0
-                # Accel vector
-                accel  = np.array([msg.linear_acceleration.x , msg.linear_acceleration.y , msg.linear_acceleration.z]) - np.array([-0.13030262513798302, -9.49842453250673, 0.7248717691083202])
-                # update
-                prev_camera_state[2] = accel
-                is_accel_updated = True
-
-            elif topic == gyro_topic:
-                # Header
-                frame_id = msg.header.frame_id
-                secs, nsecs = msg.header.stamp.secs, msg.header.stamp.nsecs
-                timestamp = secs + nsecs/1000000000.0 
-                # ang Vel Vector
-                ang_vel = np.array([msg.angular_velocity.x , msg.angular_velocity.y , msg.angular_velocity.z])
-                # update
-                prev_camera_state[4] = ang_vel
-                is_gyro_updated = True
-
-            else:
-                pass
-            ### RGBD image ###
-            if RGBD_pair[0] is not None and RGBD_pair[1] is not None:
-
-                color_image, depth_image = RGBD_pair
-                image_frame_count += 1
-
-                if image_frame_count > images_to_skip:
-
-                    rgbd_image = o3d.geometry.RGBDImage.create_from_color_and_depth(o3d.geometry.Image(color_image), o3d.geometry.Image(depth_image), convert_rgb_to_intensity=False)
-                    # # width: 640, height: 480, ppx: 319.398, ppy: 237.726, fx: 381.68, fy: 381.68, model: 4, coeffs: [0, 0, 0, 0, 0]
-                    # # width: 640, height: 480, ppx: 335.273, ppy: 248.74, fx: 612.64, fy: 612.115, model: 2, coeffs: [0, 0, 0, 0, 0]
-                    pcd = o3d.geometry.PointCloud.create_from_rgbd_image(rgbd_image,o3d.camera.PinholeCameraIntrinsic(o3d.camera.PinholeCameraIntrinsicParameters.PrimeSenseDefault))
-                    all_pcd.append(pcd)
-
-            ### update position ###
-            if is_gyro_updated and is_accel_updated:
-                if prev_timestamp == 0:
-                    prev_timestamp = timestamp
-                
-                # set flags to false
-                is_gyro_updated = False
-                is_accel_updated = False
-
-                # calc dt
-                dt = timestamp - prev_timestamp
-                prev_timestamp = timestamp
-                timestamps = np.append(timestamps,timestamp)
-                dts = np.append(dts,dt)
-
-                # get camera vectors
-                camera_state = camera_states[-1]
-                camera_pos = camera_state[0]
-                camera_vel = camera_state[1]
-                camera_accel = camera_state[2]
-                camera_ang_pos = camera_state[3]
-                camera_ang_vel = camera_state[4]
-
-                # update
-                new_camera_pos = camera_pos + camera_vel*dt
-                new_camera_vel = camera_vel + camera_accel*dt 
-                new_camera_ang_pos = camera_ang_pos + camera_ang_vel*dt 
-
-                new_camera_state = np.array([[new_camera_pos,new_camera_vel,camera_accel,new_camera_ang_pos,camera_ang_vel]],dtype = float)
-                camera_states = np.concatenate((camera_states,new_camera_state))
-        except:
-            pass
-
-    ########## After the For Loop ############
-
-    #### run 3d visualization ###
-    for ix in range(1,len(all_pcd)):
-        pcd = all_pcd[ix]
-        if ix != 1:
-            source_pcd = all_pcd[ix]
-            target_pcd = all_pcd[ix-1]
-            voxel_size = 10
-            result_global = execute_global_registration(source_pcd,target_pcd,voxel_size)
-
-            trans_matrix_global_reg = result_global.transformation
-            threshold = voxel_size*1.5
-            result_local = execute_local_registration(source_pcd,target_pcd,trans_matrix_global_reg,threshold)
-
-            source_pcd.transform(result_local.transformation)
-
-    o3d.visualizer.draw_geometries(all_pcd)
-
-
-    # x = camera_states[:,0,0]
-    # y = camera_states[:,0,1]
-    # z = camera_states[:,0,2]
-
-    # v_x = camera_states[:,1,0]
-    # v_y = camera_states[:,1,1]
-    # v_z = camera_states[:,1,2]
-
-    # a_x = camera_states[:,2,0]
-    # a_y = camera_states[:,2,1]
-    # a_z = camera_states[:,2,2]
-
-    # calibration = [np.mean(v) for v in (a_x,a_y,a_z)]
-
-    # ### Post process the camera state data ###
-
-    # plt.figure()
-    # plt.subplot(221)
-    # plt.plot(x,y)
-    # plt.title("xy position")
-    # plt.subplot(222)
-    # plt.plot(v_x,'g')
-    # plt.plot(a_x,'r')
-    # plt.title("x")
-    # plt.subplot(224)
-    # plt.plot(v_y,'g')
-    # plt.plot(a_y,'r')
-    # plt.title("y")
-    # plt.show()
 
 
 
@@ -265,7 +74,6 @@ def display_inlier_outlier(cloud, ind):
     inlier_cloud = cloud.select_by_index(ind)
     outlier_cloud = cloud.select_by_index(ind, invert=True)
 
-    print("Showing outliers (red) and inliers (gray): ")
     outlier_cloud.paint_uniform_color([1, 0, 0])
     inlier_cloud.paint_uniform_color([0.8, 0.8, 0.8])
     o3d.visualization.draw_geometries([inlier_cloud, outlier_cloud])
@@ -431,10 +239,9 @@ def remove_distortion(cloud):
     theta = np.arctan2(m,1)
     new_x, new_y = rotate_2d((0,0),(x,y),-theta)
     new_points = np.stack((new_x,new_y)).transpose()
-    print(np.shape(new_points))
+
 
     # find best fit curve
-    print("finding curve")
     sampled = new_points[np.random.randint(new_points.shape[0],size = 500), :]
     sampled = sampled[np.argsort(sampled[:,0])]
     sampled_x = sampled[:,0]
@@ -442,7 +249,6 @@ def remove_distortion(cloud):
     f_curve = np.poly1d(np.polyfit(sampled_x, sampled_y, 3))
     curve_x = sampled_x
     curve_y = f_curve(curve_x)
-    print("done")
 
     # change_y 
     proj_x = new_x
@@ -473,15 +279,17 @@ def remove_distortion(cloud):
 
     return proj_cloud
 
-def show_ply_file(file):
-    # parameters
-    voxel_size = 15
+def show_ply_file(file, voxel_size = 15):
 
     # get data
     cloud = o3d.io.read_point_cloud(file)
     print("finshed reading file")
     cloud = cloud.voxel_down_sample(voxel_size = voxel_size)
-    print(cloud.points)
+    
+    # first visualization
+    print("showing unprocecced point cloud")
+    o3d.visualization.draw_geometries([cloud])
+
     # trasform data into world frame
     z_camera_to_table = 850
     Beta = 35*2*np.pi/360
@@ -579,11 +387,8 @@ def show_ply_file(file):
         if cluster_size > pot_area*1.5:
             # kmeans to segment
             num_pots = int(cluster_size/pot_area)
-            print(cluster_size, cluster_size/pot_area, num_pots)
             cluster_points = np.array([[tup[0],tup[1]] for tup in cl.assignments[cluster_id]])
-            print("start kmeans")
             model = KMeans(n_clusters = num_pots, random_state = 0 ).fit(cluster_points)
-            print("finished k means")
             labels = model.labels_; labels += 1
             cluster_centers = model.cluster_centers_
             inertia = model.inertia_
@@ -618,20 +423,39 @@ def show_ply_file(file):
     axes = o3d.geometry.TriangleMesh.create_coordinate_frame(size = 1000, origin = np.array([0,0,0]))
 
     # create visualization
-    o3d.visualization.draw_geometries([cloud, cloud_table_plane, axes], point_show_normal = False)
+    print("showing final point cloud")
+    o3d.visualization.draw_geometries([cloud, cloud_table_plane], point_show_normal = False)
 
+def show_pcd_files(files,voxel_size = 0.01):
+    all_cloud = []
+    for file in files:
+        # get data
+        cloud = o3d.io.read_point_cloud(file)
+        print("finshed reading file")
+        cloud = cloud.voxel_down_sample(voxel_size = voxel_size)
 
+        # color = np.random.uniform(0,1,3)
+        # cloud.paint_uniform_color(color)
+        all_cloud.append(cloud)
+    
+    # first visualization
+    o3d.visualization.draw_geometries(all_cloud)
 if __name__ == "__main__":
 
     ### PLY files ###
     f1 = "data/4_pots_optimized.ply"
     f2 = "data/sample_GR(optimized).ply"
     f3 = "data/pot_full.ply"
-    show_ply_file(f3)
+    f4 = "data/RG1.ply"
+    show_ply_file(f3,voxel_size = 15)
     #ply_analyze_canopy(f2)
-    ### Bag Files ###
 
-    b1 = "data/20200724_134822.bag"
-    b2 = "data/20200724_135552.bag"
-    # show_rosbag(b2)
+
+    ### PCD files ###
+    p1 = "data/a.pcd"
+    p2 = "data/b.pcd"
+    p3 = "data/scan.pcd"
+    # files = [file for file in glob.glob("data/*.pcd")]
+    # print(files)
+    #show_pcd_files([p3])
 
