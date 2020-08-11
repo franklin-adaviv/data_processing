@@ -287,7 +287,7 @@ def show_ply_file(file, voxel_size = 15):
     cloud = cloud.voxel_down_sample(voxel_size = voxel_size)
     
     # first visualization
-    print("showing unprocecced point cloud")
+    print("showing unprocessed point cloud")
     o3d.visualization.draw_geometries([cloud])
 
     # trasform data into world frame
@@ -316,9 +316,9 @@ def show_ply_file(file, voxel_size = 15):
     fit, residual, rnk , s = scipy.linalg.lstsq(A,B)
 
     # creating a table points mesh point cloud
-    xlim = [0,5000]
-    ylim = [0,5000]
-    step = 100
+    xlim = [np.min(points[:,0]),np.max(points[:,0])]
+    ylim = [np.min(points[:,1]),np.max(points[:,1])]
+    step = (xlim[1] - xlim[0])//100
     X,Y = np.meshgrid(np.arange(xlim[0], xlim[1], step),
                   np.arange(ylim[0], ylim[1], step))
     Z = np.zeros(X.shape)
@@ -379,7 +379,7 @@ def show_ply_file(file, voxel_size = 15):
 
     pot_edge_len = 320/voxel_size 
     pot_area = pot_edge_len**2
-    large_clusters = [tup for tup in cl.sorted_clusters if (tup[1] > pot_area*.75)]
+    large_clusters = [tup for tup in cl.sorted_clusters if (tup[1] > pot_area*.6)]
 
     # process large clusters and segment them so that its N pots rather than 1 large pot
     new_labels = np.zeros(np.shape(cl.labels))
@@ -401,7 +401,32 @@ def show_ply_file(file, voxel_size = 15):
         else:
             cluster_points = np.array([[tup[0],tup[1]] for tup in cl.assignments[cluster_id]])
             new_labels[cluster_points[:,0],cluster_points[:,1]] = cluster_id
+    
 
+    # using the new labels, update cluster labeling instance
+    cl.process_new_labels(new_labels)
+
+    # create visualization for plant centroids
+    all_indicators = None
+    all_coordiante_pts = []
+    for cluster_id in cl.cluster_centroids:
+        coordinates_grid = np.array([val for val in cl.cluster_centroids[cluster_id]])
+        coordinates_pts = coordinates_grid*voxel_size + pots_xy_min; all_coordiante_pts.append(coordinates_pts)
+        coordinates_3d = np.zeros((100,3))
+        coordinates_3d[:,2] = np.linspace(0,1500,100)
+        coordinates_3d[:,:2] = coordinates_pts
+
+        # adding to all points
+        if all_indicators is None:
+            all_indicators = coordinates_3d
+        else:
+            all_indicators = np.vstack((all_indicators, coordinates_3d))
+
+    
+
+    # create indicator point cloud
+    cloud_indicator = o3d.geometry.PointCloud()
+    cloud_indicator.points = o3d.utility.Vector3dVector(all_indicators)
 
     plt.close("all")
     plt.figure()
@@ -419,12 +444,13 @@ def show_ply_file(file, voxel_size = 15):
     # display_inlier_outlier(cloud_pot, ind)
     cloud_pot = cloud_pot.select_by_index(ind)
 
-    # # axes 
+    # axes 
     axes = o3d.geometry.TriangleMesh.create_coordinate_frame(size = 1000, origin = np.array([0,0,0]))
 
     # create visualization
     print("showing final point cloud")
-    o3d.visualization.draw_geometries([cloud, cloud_table_plane], point_show_normal = False)
+    all_cloud_list = [cloud, cloud_table_plane,cloud_indicator]
+    o3d.visualization.draw_geometries(all_cloud_list, point_show_normal = False)
 
 def show_pcd_files(files,voxel_size = 0.01):
     all_cloud = []

@@ -49,16 +49,18 @@ class Cluster_Labeling():
         new_cluster_name_int = 0
 
         # Check for all clusters
-        new_cluster_name_int = np.max(new_labels) + 1
-        for cluster_id in range(1,int(new_cluster_name_int)):
-            row_coords, col_coords = np.where(new_labels == cluster_id)
-            new_assignments[cluster_id] = list(zip(row_coords,col_coords))
-            new_cluster_sizes[cluster_id] = len(new_assignments[cluster_id])
-            new_sorted_clusters  = sorted(new_cluster_sizes.items(), key = lambda x : x[1], reverse = True)
+
+        for cluster_id in np.unique(new_labels):
+            if cluster_id != 0:
+                row_coords, col_coords = np.where(new_labels == cluster_id)
+                new_assignments[cluster_id] = list(zip(row_coords,col_coords))
+                new_cluster_sizes[cluster_id] = len(new_assignments[cluster_id])
+                new_sorted_clusters  = sorted(new_cluster_sizes.items(), key = lambda x : x[1], reverse = True)
+                new_cluster_name_int = cluster_id + 1
 
         # set values
         self.labels = new_labels
-        self.assignments = new_assignments
+        self.assignments = new_assignments;
         self.cluster_sizes = new_cluster_sizes
         self.sorted_clusters = new_sorted_clusters
         self.cluster_name_int = new_cluster_name_int 
@@ -68,7 +70,9 @@ class Cluster_Labeling():
             self.cluster_centroids = new_cluster_centroids
 
         else:
+
             self.find_centroids()
+            self.rename_clusters()
 
 
 
@@ -97,18 +101,15 @@ class Cluster_Labeling():
         new_sorted_clusters = []
         new_cluster_centroids = dict()
         new_labels = np.zeros(np.shape(self.labels))
-
         if len(self.sorted_clusters) > 0:
             for i in range(len(self.sorted_clusters)):
                 prev_cluster_name = self.sorted_clusters[i][0]
                 new_cluster_name = i+1
-                if prev_cluster_name != new_cluster_name:
-                    # change all instances of prev names to new name
-                    new_assignments[new_cluster_name] = self.assignments.pop(prev_cluster_name)
-                    new_cluster_sizes[new_cluster_name] = self.cluster_sizes.pop(prev_cluster_name)
-                    new_sorted_clusters.append((new_cluster_name, self.sorted_clusters[i][1]))
-                    new_cluster_centroids[new_cluster_name] = self.cluster_centroids.pop(prev_cluster_name)
-                    new_labels[np.where(self.labels == prev_cluster_name)] = new_cluster_name
+                new_assignments[new_cluster_name] = self.assignments.pop(prev_cluster_name)
+                new_cluster_sizes[new_cluster_name] = self.cluster_sizes.pop(prev_cluster_name)
+                new_sorted_clusters.append((new_cluster_name, self.sorted_clusters[i][1]))
+                new_cluster_centroids[new_cluster_name] = self.cluster_centroids.pop(prev_cluster_name)
+                new_labels[np.where(self.labels == prev_cluster_name)] = new_cluster_name
                 
             # set naming variable
             self.cluster_name_int = self.sorted_clusters[-1][0]
