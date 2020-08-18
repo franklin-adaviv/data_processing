@@ -13,6 +13,12 @@ from sklearn.cluster import KMeans
 
 
 def draw_registration_result(source, target, transformation):
+    # For visualizing tranformations. 
+    # Input:
+    #       source: 1st point cloud
+    #       target: 2nd point cloud
+    #       transformation_matrix: 4x4 2d np array specifying tranformation of source
+    # Output: visualization 
     source_temp = copy.deepcopy(source)
     target_temp = copy.deepcopy(target)
     source_temp.paint_uniform_color([1, 0.706, 0])
@@ -22,7 +28,8 @@ def draw_registration_result(source, target, transformation):
 
 
 def execute_global_registration(source_pcd, target_pcd, voxel_size,distance_threshold = None):
-    
+    # open3d function that calculates the transformation matrix between two sets of point clouds
+
     def preprocess_point_cloud(pcd, voxel_size):
         # The FPFH feature is a 33-dimensional vector that describes the local geometric property of a point.
         pcd_down = pcd.voxel_down_sample(voxel_size)
@@ -79,6 +86,12 @@ def display_inlier_outlier(cloud, ind):
     o3d.visualization.draw_geometries([inlier_cloud, outlier_cloud])
 
 def ply_analyze_canopy(file):
+    # main function used to analyze pcd/ply files of platn canopy
+    # Input: 
+    #       file: filename of canopy pc file
+    # Output: 
+
+
     # parameters
     voxel_size = 15
 
@@ -89,7 +102,6 @@ def ply_analyze_canopy(file):
     # trasform data into world frame
     z_camera_to_table = 700
     Beta = 43*2*np.pi/360
-
     R = o3d.geometry.get_rotation_matrix_from_xyz(np.array([-Beta,np.pi,np.pi/2]))    # for the pots file
 
     #R = o3d.geometry.get_rotation_matrix_from_xyz(np.array([0,np.pi/2,np.pi/2]))     # for the long bench file
@@ -259,12 +271,15 @@ def remove_distortion(cloud):
 
     plt.figure()
     plt.subplot(221)
-    plt.scatter(x,y)
+    plt.title("fitting line to points")
+    plt.scatter(x,y+b)
     plt.plot(x, m*x+b)
     plt.subplot(222)
+    plt.title("fitting polynomial to centered points")
     plt.scatter(sampled_x,sampled_y)
     plt.plot(curve_x,curve_y)
     plt.subplot(223)
+    plt.title("vertical translation of points using fitted polynomial")
     ix = np.random.randint(proj_points.shape[0],size = 100)
     sampled_proj_x = proj_points[ix,0]
     sampled_proj_y = proj_points[ix,1]
@@ -280,6 +295,14 @@ def remove_distortion(cloud):
     return proj_cloud
 
 def show_ply_file(file, voxel_size = 15):
+    # main fucntion to vizualize ply file of pots
+    # input: point cloud file of pots
+    # output: visualizaitons
+    # steps
+    #       1. initial manual tranformation
+    #       2. Using least squared to estimate the table plane
+    #       3. comparing normal vector to Z axis and transforming accordingly.
+    #       4. Apply distortion removal to get rid of curve
 
     # get data
     cloud = o3d.io.read_point_cloud(file)
@@ -422,7 +445,6 @@ def show_ply_file(file, voxel_size = 15):
         else:
             all_indicators = np.vstack((all_indicators, coordinates_3d))
 
-    
 
     # create indicator point cloud
     cloud_indicator = o3d.geometry.PointCloud()
@@ -430,9 +452,11 @@ def show_ply_file(file, voxel_size = 15):
 
     plt.close("all")
     plt.figure()
-    plt.subplot(211)
+    plt.subplot(121)
+    plt.title("output of clustering algorithm")
     plt.imshow(np.flip(cl.labels.transpose(),axis = 0))
-    plt.subplot(212)
+    plt.subplot(122)
+    plt.title("kmeans and filtering to find pots")
     plt.imshow(np.flip(new_labels.transpose(),axis = 0))
     plt.savefig("output/pots.png")
     plt.close("all")
@@ -473,8 +497,8 @@ if __name__ == "__main__":
     f2 = "data/sample_GR(optimized).ply"
     f3 = "data/pot_full.ply"
     f4 = "data/RG1.ply"
-    show_ply_file(f3,voxel_size = 15)
-    #ply_analyze_canopy(f2)
+    #show_ply_file(f3,voxel_size = 15)
+    ply_analyze_canopy(f2)
 
 
     ### PCD files ###
